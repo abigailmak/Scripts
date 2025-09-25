@@ -7,10 +7,11 @@ import os
 import platform
 import socket
 import subprocess
-import time
+from datetime import datetime
+from ipaddress import IPv4Interface
 
 def run(cmd: str) -> str:
-    return subprocess.run(cmd, shell=True, captureOutput=True, text=True).stdout.strip();
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout.strip();
 
 #lets collect all the info
 def getDomainSuf():
@@ -18,8 +19,8 @@ def getDomainSuf():
     domain = run("hostname -d")
     if domain:
             return domain
-    #if that fails, then look at resolv.conf
-    return run("grep -m1 'search' /etc/resolve.conf | awk '{print $2}'") or "N/A"
+    #if that fails, peek at resolv.conf
+    return run("grep -m1 'search' /etc/resolv.conf | awk '{print $2}'") or "N/A"
 
 
 def getIPandMask():
@@ -28,7 +29,7 @@ def getIPandMask():
     if not line:
         return "N/A", "N/A"
     parts = line.split()
-    cidr = parts[3] #looks like 192.168.1.10/24
+    cidr = parts[3] #should look like 192.168.1.10/24
     iface = IPv4Interface(cidr)
     return str(iface.ip), str(iface.netmask)
 
@@ -36,11 +37,16 @@ def getGateway():
     return run("ip route | awk '/^default/ {print $3}'") or "N/A"
 
 def getDNSservers():
-    #Grab the first two DNS servers from resolv.conf."
-    servers = run("grep -m1 '^PRETTY_NAME=' /etc/*release | cut -d= -f2 | tr -d '\"'") or platform.system()
+    #Grab the first two DNS servers from resolv.conf
+    servers = run("grep '^nameserver' /etc/resolv.conf | awk '{print $2}'").splitlines()
+    return servers[0] if len(servers)>0 else "N/A", servers[1] if len(servers)>1 else "N/A"
+
+def getOSInfo():
+    #Get OS name, version, and kernel
+    osName = run("grep -m1 '^PRETTY_NAME=' /etc/*release | cut -d= -f2 | tr -d '\"'") or platform.system()
     version = run("grep -m1 'VERSION_ID=' /etc/*release | cut -d= -f2 |tr -d '\"'") or "N/A"
     kernel = platform.release()
-    return os_name, version, kernel
+    return osName, version, kernel
 
 def getDiskInfo():
     #Return the total availabile safe on the root filesystem
@@ -65,7 +71,7 @@ def getRamInfo():
 def main():
     #Clear the terminal at the start
     os.system("clear")
-    
+
     #Set up report basics
     today = datetime.now().strftime("%B &d, %Y")
     hostname = socket.gethostname()
@@ -76,11 +82,13 @@ def main():
     ip, mask = getIPandMask()
     gateway = getGateway()
     dns1, dns2 = getDNSservers()
-    osName, osVersion, kernel = get_os_info()
+    osName, osVersion, kernel = getOSInfo()
     cpuModel, numcpus, numcores = getCPUInfo()
     ramTotal, ramAvail = getRamInfo()
+    diskTotal, diskFree = getDiskInfo()
 
-    report = f"""
+
+report = f"""
     System Report - {today}
     ====================================================================
 
@@ -100,11 +108,6 @@ def main():
         OS Version:          {osVersion}
         Kernel Version:      {kernel}
 
-    [Operating System] 
-        OS Name:             {osName}
-        OS Version:          {osVersion}
-        Kernel Version:      {kernel}
-
     [Storage Information}
         CPU Model:           {cpuModel}
         Number of CPUs:      {numcpus}
@@ -118,10 +121,9 @@ def main():
 
     print(report)
 
-    #Save to logfile
     with open(logfile, "w") as f:
             f.write(report)
-
+        
 
 if __name__=="__main__":
     main()
