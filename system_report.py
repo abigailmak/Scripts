@@ -108,7 +108,7 @@ report = f"""
         OS Version:          {osVersion}
         Kernel Version:      {kernel}
 
-    [Storage Information}
+    [Storage Information]
         CPU Model:           {cpuModel}
         Number of CPUs:      {numcpus}
         Number of Cores:     {numcores}
