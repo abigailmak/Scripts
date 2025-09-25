@@ -117,6 +117,10 @@ report = f"""
         Total RAM:           {ramTotal}
         Available RAM:       {ramAvail}
 
+     [Disk Information]
+        Total Disk Space:    {diskTotal}
+        Free Disk Space:     {diskFree}
+
     """
 
     print(report)
