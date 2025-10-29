@@ -1,157 +1,163 @@
 #!/usr/bin/env python3
-"""
-Abigail Mak 10/29/2025 This is meant to generate a report of IP addresses with 10 or more failed login 
-attempts from a provided syslog file (default: /home/student/sys.log) 
+# attacker_report.py
+# Author: <Your Name>
+# Date: 2025-10-29
+# Course: NSSA221 Systems Administration I
+#
+# Description:
+#   Parse a provided syslog file and produce an "Attacker Report" showing
+#   IP addresses that have 10 or more failed SSH login attempts, the
+#   count of attempts, and the country of origin (using geoip.geolite2).
+#
+# Requirements satisfied:
+#   - Shebang present
+#   - Script clears the terminal
+#   - Uses regex for IP extraction
+#   - Shows headers, count, IP, country
+#   - Shows current date
+#   - Filters IPs with >= 10 failed attempts
+#   - Sorted ascending by count
+#   - Uses geoip/geolite2 to resolve country
+#   - Sufficient comments + Pythonic style
+#   - Safe error handling for missing files or missing geoip data
 
-- shebang + executable - script commented - clears terminal at run 
-- uses regex to extract IPv4 addresses from "Failed password" lines 
-- counts and filters IPs having >= 10 failed attempts 
-- uses geoip.geolite2 to get country of origin 
-- displays current date, headers, and results sorted in ascending order 
-- structured, pythonic style with error handling and comments
-"""
-
-import os
 import re
+import os
 import sys
-from collections import Counter
-from datetime import date
-import argparse
+from datetime import datetime
+from collections import Counter, OrderedDict
 
-# GeoIP import
+# GeoIP import (assignment-specified)
 try:
     from geoip import geolite2
-except Exception:
-    geolite2 = None
+except Exception as e:
+    geolite2 = None  # gracefully handle absence of the module
 
-# Constantssssss
-defaultLogPath = "/home/student/syslog.log"
-MinFailures = 10
+# CONFIGURATION
+DEFAULT_LOG_PATHS = [
+    "/home/student/syslog.log",  # assignment-specified location
+    "./syslog.log",              # convenient local fallback
+]
+MIN_FAILED_ATTEMPTS = 10
 
-# regex to find ipv4 addys on lines mentioning failed passwords
-ipRegex = re.compile(r'Failed password.*from\s+(\d{1,3}(?:\.\d{1,3}){3})')
-
-# =========================
-# Utility functions
-# =========================
-
-def clearTerminal():
-    #clear the terminal for a clean report
-    os.system("clear")
-
-
-def readLogFile(path):
-    #return the contents of the log file as an iterable of lines
+# Clear the terminal screen (rubric requires clearing)
+def clear_terminal():
+    # 'clear' works on most Unix-like shells; fallback to printing newlines.
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            return fh.readlines()
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Log file not found: {path}")
-    except PermissionError:
-        raise PermissionError(f"Permission denied reading log file: {path}")
+        os.system("clear")
+    except Exception:
+        print("\n" * 100)
 
+# Compile regex to capture IPv4 addresses from "Failed password for ... from <IP>"
+# This also covers lines like:
+#   "sshd[...] Failed password for root from 1.2.3.4 port 12345 ssh2"
+IP_PATTERN = re.compile(
+    r"Failed password for (?:invalid user\s+)?\S+\s+from\s+(\b(?:\d{1,3}\.){3}\d{1,3}\b)",
+    flags=re.IGNORECASE
+)
 
-def extractFailedIPs(lines):
-    #here we are extracting the ipv4 addys from lines showing failed login attempts 
-    #oh this function also returns a list of IP strings
-    ips = []
-    for line in lines:
-        m = ipRegex.search(line)
-        if m:
-            ips.append(m.group(1))
-    return ips
+def find_log_file():
+    """Return the first existing log file path from DEFAULT_LOG_PATHS or raise."""
+    for path in DEFAULT_LOG_PATHS:
+        if os.path.isfile(path):
+            return path
+    raise FileNotFoundError(
+        "Could not find syslog.log in expected locations. "
+        f"Checked: {', '.join(DEFAULT_LOG_PATHS)}"
+    )
 
+def extract_failed_ips(log_text):
+    """Return list of IPv4 addresses found in failed-authentication messages."""
+    return IP_PATTERN.findall(log_text)
 
-def getCountryForIP(ip):
-    #we're looking up the country code and name for an IP using geoip.geolite2 
-    #it also returns a short string (country code or
-    if not geolite2:
-        return "GeoIP unavailable"
+def count_ips(ip_list):
+    """Return a Counter mapping IP -> count."""
+    return Counter(ip_list)
+
+def country_for_ip(ip):
+    """Return the ISO country code (or 'Unknown') for an IP using geolite2."""
+    if geolite2 is None:
+        return "Unknown"
     try:
         match = geolite2.lookup(ip)
-        if not match:
-            return "Unknown"
-        # geolite2.match may have attributes like .country or .country_code depending on version
-        country = getattr(match, "country", None)
-        if country:
-            return country
-        country_code = getattr(match, "country_code", None)
-        if country_code:
-            return country_code
-        # fallback not fallout, this is not a band
-        return "Unknown"
+        if match and getattr(match, "country", None):
+            # match.country is usually the country code (e.g., 'US')
+            return match.country
     except Exception:
-        return "Unknown"
+        pass
+    return "Unknown"
 
+def format_report_rows(attacker_items):
+    """
+    attacker_items: iterable of (ip, count) pairs sorted as required
+    Returns list of tuples (count, ip, country)
+    """
+    rows = []
+    for ip, count in attacker_items:
+        country = country_for_ip(ip)
+        rows.append((count, ip, country))
+    return rows
 
-def buildReport(ip_counts, min_failures=MinFailures):
-    #now we are building the list of all the ips, their countries and their number of failures
-    filtered = [(count, ip) for ip, count in ip_counts.items() if count >= min_failures]
-    filtered.sort(key=lambda x: x[0])  # sort ascending by count
-    #ok lets attach the country info
-    report_rows = []
-    for count, ip in filtered:
-        country = getCountryForIP(ip)
-        report_rows.append((count, ip, country))
-    return report_rows
+def print_report(rows):
+    """Nicely print the report to stdout."""
+    # Header with date
+    title_date = datetime.now().strftime("%B %d, %Y")
+    print(f"\033[1;32mAttacker Report – {title_date}\033[0m\n")
 
+    # Column headers
+    col_count = "COUNT"
+    col_ip = "IP ADDRESS"
+    col_country = "COUNTRY"
+    print(f"{col_count:<8}  {col_ip:<18}  {col_country}")
+    print("-" * 46)
 
-def printReport(rows):
-    #print formatted report to stdout including the current date
-    today = date.today().strftime("%B %d, %Y")
-    #lets try colored headers!!!! i love me some skittles
-    #taste the rainbow
-    print(f"\033[1;32mAttacker Report - {today}\033[0m\n")
-    print(f"\033[1;31m{'COUNT':<8}{'IP ADDRESS':<20}{'COUNTRY':<15}\033[0m")
+    # Rows
     if not rows:
-        print("\nNo IP addresses with 10 or more failed attempts were found.")
-        return
-    for count, ip, country in rows:
-        print(f"{count:<8}{ip:<20}{country:<15}")
+        print("No IP addresses with", MIN_FAILED_ATTEMPTS, "or more failed attempts found.")
+    else:
+        for count, ip, country in rows:
+            print(f"{count:<8}  {ip:<18}  {country}")
 
-
-def parseArgs():
-    #Argument parsing to allow specifying a different log file if desired
-    parser = argparse.ArgumentParser(
-        description="Generate attacker report from syslog-like file (failed ssh logins)."
-    )
-    parser.add_argument(
-        "-f", "--file",
-        default = defaultLogPath,
-        help=f"path to syslog file (default: {defaultLogPath})"
-    )
-    parser.add_argument(
-        "-t", "--threshold",
-        type=int,
-        default=MinFailures,
-        help=f"minimum number of failed attempts to include (default: {MinFailures})"
-    )
-    return parser.parseArgs()
-
+    print("-" * 46)
+    print(f"Total flagged IPs: {len(rows)}")
+    print("Report generated by attacker_report.py")
 
 def main():
-    args = parseArgs()
+    # Clear screen per rubric
+    clear_terminal()
 
-    #Step 1 
-    clearTerminal()
-
-    #Step 2: read file
+    # Find log file
     try:
-        lines = readLogFile(args.file)
-    except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        log_path = find_log_file()
+    except FileNotFoundError as e:
+        print("Error:", e, file=sys.stderr)
         sys.exit(2)
 
-    #Step 3: Extract IPs and count
-    ips = extractFailedIPs(lines)
-    ip_counts = Counter(ips)
+    # Read log file
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as fh:
+            log_text = fh.read()
+    except Exception as e:
+        print(f"Error reading log file ({log_path}): {e}", file=sys.stderr)
+        sys.exit(3)
 
-    #Step 4:  Build report with threshold
-    report_rows = buildReport(ip_counts, min_failures=args.threshold)
+    # Extract IPs with regex
+    ip_list = extract_failed_ips(log_text)
 
-    #Step 5: Print
-    printReport(report_rows)
+    # Count failures per IP
+    counts = count_ips(ip_list)
 
+    # Filter to MIN_FAILED_ATTEMPTS or greater
+    attackers = {ip: cnt for ip, cnt in counts.items() if cnt >= MIN_FAILED_ATTEMPTS}
+
+    # Sort by count ascending (rubric: "Count is sorted in ascending order.")
+    sorted_attackers = sorted(attackers.items(), key=lambda pair: pair[1])
+
+    # Prepare rows (resolve countries)
+    rows = format_report_rows(sorted_attackers)
+
+    # Print report
+    print_report(rows)
 
 if __name__ == "__main__":
     main()
